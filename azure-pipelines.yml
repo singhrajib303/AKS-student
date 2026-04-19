@@ -1,0 +1,50 @@
+trigger:
+- main
+
+variables:
+  acrName: 'YOUR_ACR_NAME'
+  imageName: 'demoapp'
+  aksCluster: 'YOUR_AKS_NAME'
+  resourceGroup: 'YOUR_RG'
+  tag: '$(Build.BuildId)'
+
+stages:
+
+- stage: Build
+  jobs:
+  - job: BuildPush
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'azure-service-connection'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az aks install-cli
+          az acr login --name $(acrName)
+          docker build -t $(acrName).azurecr.io/$(imageName):$(tag) .
+          docker push $(acrName).azurecr.io/$(imageName):$(tag)
+
+- stage: Deploy
+  dependsOn: Build
+  jobs:
+  - job: Deploy
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: 'azure-service-connection'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az aks get-credentials --resource-group $(resourceGroup) --name $(aksCluster) --overwrite-existing
+          sed -i "s|YOUR_ACR_NAME.azurecr.io/demoapp:latest|$(acrName).azurecr.io/$(imageName):$(tag)|g" k8s/deployment.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl get pods
+          kubectl get svc
